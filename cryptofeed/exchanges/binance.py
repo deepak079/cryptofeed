@@ -1,5 +1,5 @@
 '''
-Copyright (C) 2017-2023 Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2022 Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
@@ -120,7 +120,7 @@ class Binance(Feed, BinanceRestMixin):
             if self.is_authenticated_channel(normalized_chan):
                 continue
 
-            stream = chan
+            stream = chan 
             if normalized_chan == CANDLES:
                 stream = f"{chan}{self.candle_interval}"
             elif normalized_chan == L2_BOOK:
@@ -147,6 +147,9 @@ class Binance(Feed, BinanceRestMixin):
     def _reset(self):
         self._l2_book = {}
         self.last_update_id = {}
+        self.last_snapshot_refresh_time = {}
+        self.last_snapshot_lowest_bid = {}
+        self.last_snapshot_highest_ask = {}
 
     async def _refresh_token(self):
         while True:
@@ -261,7 +264,7 @@ class Binance(Feed, BinanceRestMixin):
             # Old message, can ignore it
             return True
         elif msg['U'] <= self.last_update_id[std_pair] + 1 <= msg['u']:
-            self.last_update_id[std_pair] = msg['u']
+            self.last_update_id[std_pair] = msg['u']        
             return False
         elif self.last_update_id[std_pair] + 1 == msg['U']:
             self.last_update_id[std_pair] = msg['u']
@@ -270,6 +273,8 @@ class Binance(Feed, BinanceRestMixin):
             self._reset()
             LOG.warning("%s: Missing book update detected, resetting book", self.id)
             return True
+        
+    
 
     async def _snapshot(self, pair: str) -> None:
         max_depth = self.max_depth if self.max_depth else 1000
@@ -285,6 +290,10 @@ class Binance(Feed, BinanceRestMixin):
 
         std_pair = self.exchange_symbol_to_std_symbol(pair)
         self.last_update_id[std_pair] = resp['lastUpdateId']
+        self.last_snapshot_refresh_time[std_pair] = int(time.time())
+        self.last_snapshot_lowest_bid[std_pair] = Decimal(resp['bids'][len(resp['bids'])-1][0])
+        self.last_snapshot_highest_ask[std_pair] = Decimal(resp['asks'][len(resp['asks'])-1][0])
+
         self._l2_book[std_pair] = OrderBook(self.id, std_pair, max_depth=self.max_depth, bids={Decimal(u[0]): Decimal(u[1]) for u in resp['bids']}, asks={Decimal(u[0]): Decimal(u[1]) for u in resp['asks']})
         await self.book_callback(L2_BOOK, self._l2_book[std_pair], time.time(), timestamp=timestamp, raw=resp, sequence_number=self.last_update_id[std_pair])
 
@@ -333,7 +342,41 @@ class Binance(Feed, BinanceRestMixin):
                         del self._l2_book[pair].book[side][price]
                 else:
                     self._l2_book[pair].book[side][price] = amount
+        
+        time_now = int(time.time())
+        if time_now - self.last_snapshot_refresh_time[pair] >= 15 and time_now % 15 == 0:
+            self.last_snapshot_refresh_time[pair] = time_now
+            max_depth = self.max_depth if self.max_depth else 1000
+            if max_depth not in self.valid_depths:
+                for d in self.valid_depths:
+                    if d > max_depth:
+                        max_depth = d
+                        break
 
+            resp = await self.http_conn.read(self.rest_endpoints[0].route('l2book', self.sandbox).format(exchange_pair, max_depth))
+            resp = json.loads(resp, parse_float=Decimal)
+            t = self.timestamp_normalize(resp['E']) if 'E' in resp else None
+
+            
+            uid = resp['lastUpdateId']
+            
+            lowest_bid = Decimal(resp['bids'][len(resp['bids'])-1][0]) 
+            highest_ask = Decimal(resp['asks'][len(resp['asks'])-1][0])
+          
+            # print("lowestbid=", lowest_bid, "highestask=", highest_ask)
+            # print("lastlowestbid=", self.last_snapshot_lowest_bid[pair], "lasthighestask=", self.last_snapshot_highest_ask[pair])
+
+            if lowest_bid < Decimal(0.995) * self.last_snapshot_lowest_bid[pair]  or highest_ask > Decimal(1.005) * self.last_snapshot_highest_ask[pair]:
+                # print("updating orderbook...")
+                self.last_update_id[pair] = uid
+                self.last_snapshot_lowest_bid[pair] = lowest_bid
+                self.last_snapshot_highest_ask[pair] = highest_ask
+                self._l2_book[pair] = OrderBook(self.id, pair, max_depth=self.max_depth, bids={Decimal(u[0]): Decimal(u[1]) for u in resp['bids']}, asks={Decimal(u[0]): Decimal(u[1]) for u in resp['asks']})
+                await self.book_callback(L2_BOOK, self._l2_book[pair], time.time(), timestamp=t, raw=resp, sequence_number=self.last_update_id[pair])
+                return
+        
+
+        
         await self.book_callback(L2_BOOK, self._l2_book[pair], timestamp, timestamp=self.timestamp_normalize(msg['E']), raw=msg, delta=delta, sequence_number=self.last_update_id[pair])
 
     async def _funding(self, msg: dict, timestamp: float):
