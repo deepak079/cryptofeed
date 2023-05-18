@@ -366,7 +366,7 @@ class Binance(Feed, BinanceRestMixin):
             # print("lowestbid=", lowest_bid, "highestask=", highest_ask)
             # print("lastlowestbid=", self.last_snapshot_lowest_bid[pair], "lasthighestask=", self.last_snapshot_highest_ask[pair])
 
-            if lowest_bid < Decimal(0.995) * self.last_snapshot_lowest_bid[pair]  or highest_ask > Decimal(1.005) * self.last_snapshot_highest_ask[pair]:
+            if lowest_bid < Decimal(0.9975) * self.last_snapshot_lowest_bid[pair]  or highest_ask > Decimal(1.0025) * self.last_snapshot_highest_ask[pair]:
                 # print("updating orderbook...")
                 self.last_update_id[pair] = uid
                 self.last_snapshot_lowest_bid[pair] = lowest_bid

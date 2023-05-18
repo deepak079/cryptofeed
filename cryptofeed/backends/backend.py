@@ -120,6 +120,6 @@ class BackendBookCallback:
             else:
                 self.snapshot_count[book.symbol] += 1
             await self.write(data)
-            if self.snapshot_interval <= self.snapshot_count[book.symbol] and book.delta:
-                await self._write_snapshot(book, receipt_timestamp)
-                self.snapshot_count[book.symbol] = 0
+            # if self.snapshot_interval <= self.snapshot_count[book.symbol] and book.delta:
+            #    await self._write_snapshot(book, receipt_timestamp)
+            #    self.snapshot_count[book.symbol] = 0
